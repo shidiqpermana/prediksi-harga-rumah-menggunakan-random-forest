@@ -24,12 +24,19 @@ def load_model():
         model = joblib.load('model.pkl')
         preprocessing_info = joblib.load('preprocessing_info.pkl')
         return model, preprocessing_info
-    except FileNotFoundError:
-        st.error("❌ Model tidak ditemukan! Silakan jalankan train_model.py terlebih dahulu.")
+    except FileNotFoundError as e:
+        st.error(f"❌ Model tidak ditemukan! Silakan jalankan train_model.py terlebih dahulu.\n\nError: {str(e)}")
+        st.info("📝 Langkah-langkah:\n1. Jalankan: `python train_model.py`\n2. Pastikan file `train.csv` ada di direktori yang sama")
+        st.stop()
+    except Exception as e:
+        st.error(f"❌ Error saat memuat model: {str(e)}")
         st.stop()
 
 # Load model
-model, prep_info = load_model()
+try:
+    model, prep_info = load_model()
+except:
+    st.stop()
 
 # Judul aplikasi
 st.title("🏠 Prediksi Harga Rumah")
@@ -121,33 +128,53 @@ if menu == "🔮 Prediksi Single":
                 'KitchenQual': kitchen_qual,
             }
             
-            # Buat DataFrame
-            input_df = pd.DataFrame([input_data])
+            # Buat DataFrame dengan SEMUA kolom dari training data
+            # Buat dictionary lengkap dengan semua kolom yang diperlukan
+            all_columns = prep_info['numeric_cols'] + prep_info['categorical_cols']
+            complete_data = {}
             
-            # Preprocessing
-            # Tambahkan nilai default untuk kolom yang mungkin hilang
+            # Isi dengan data input yang diberikan
+            for key, value in input_data.items():
+                if key in all_columns:
+                    complete_data[key] = value
+            
+            # Tambahkan nilai default untuk kolom numerik yang belum diisi
+            for col in prep_info['numeric_cols']:
+                if col not in complete_data:
+                    if col in prep_info['numeric_medians']:
+                        complete_data[col] = prep_info['numeric_medians'][col]
+                    else:
+                        complete_data[col] = 0
+            
+            # Tambahkan nilai default untuk kolom kategorikal yang NA berarti 'None'
             for col in prep_info['categorical_na_cols']:
-                if col not in input_df.columns:
-                    input_df[col] = 'None'
-            
-            # Fill missing numeric dengan median
-            for col, median_val in prep_info['numeric_medians'].items():
-                if col in input_df.columns and pd.isna(input_df[col].iloc[0]):
-                    input_df[col] = median_val
+                if col not in complete_data:
+                    complete_data[col] = 'None'
             
             # Fill missing categorical dengan mode
-            for col, mode_val in prep_info['categorical_modes'].items():
-                if col in input_df.columns and pd.isna(input_df[col].iloc[0]):
-                    input_df[col] = mode_val
+            for col in prep_info['categorical_cols']:
+                if col not in complete_data:
+                    if col in prep_info['categorical_modes']:
+                        complete_data[col] = prep_info['categorical_modes'][col]
+                    elif col in prep_info['categorical_na_cols']:
+                        complete_data[col] = 'None'
+                    else:
+                        # Default value untuk kategori lain - gunakan mode jika ada
+                        complete_data[col] = prep_info['categorical_modes'].get(col, 'Unknown')
+            
+            # Buat DataFrame dengan urutan kolom sesuai training
+            input_df = pd.DataFrame([complete_data])
+            input_df = input_df[all_columns]
             
             # One-hot encoding
             X_encoded = pd.get_dummies(input_df, columns=prep_info['categorical_cols'], drop_first=False)
             
-            # Align columns dengan training data
+            # Align columns dengan training data - pastikan semua kolom ada
             for col in prep_info['feature_columns']:
                 if col not in X_encoded.columns:
                     X_encoded[col] = 0
             
+            # Pastikan urutan kolom sesuai dengan training
             X_encoded = X_encoded[prep_info['feature_columns']]
             
             # Prediksi
@@ -187,6 +214,28 @@ elif menu == "📊 Prediksi Batch":
                     if 'Id' in X.columns:
                         X = X.drop('Id', axis=1)
                     
+                    # Pastikan semua kolom dari training data ada
+                    all_required_cols = prep_info['numeric_cols'] + prep_info['categorical_cols']
+                    for col in all_required_cols:
+                        if col not in X.columns:
+                            if col in prep_info['numeric_cols']:
+                                # Isi dengan median jika numeric
+                                if col in prep_info['numeric_medians']:
+                                    X[col] = prep_info['numeric_medians'][col]
+                                else:
+                                    X[col] = 0
+                            else:
+                                # Isi dengan mode jika categorical
+                                if col in prep_info['categorical_modes']:
+                                    X[col] = prep_info['categorical_modes'][col]
+                                elif col in prep_info['categorical_na_cols']:
+                                    X[col] = 'None'
+                                else:
+                                    X[col] = prep_info['categorical_modes'].get(col, 'Unknown')
+                    
+                    # Pastikan urutan kolom sesuai training
+                    X = X[all_required_cols]
+                    
                     # Apply preprocessing
                     for col in prep_info['categorical_na_cols']:
                         if col in X.columns:
@@ -203,11 +252,12 @@ elif menu == "📊 Prediksi Batch":
                     # One-hot encoding
                     X_encoded = pd.get_dummies(X, columns=prep_info['categorical_cols'], drop_first=False)
                     
-                    # Align columns
+                    # Align columns dengan training data
                     for col in prep_info['feature_columns']:
                         if col not in X_encoded.columns:
                             X_encoded[col] = 0
                     
+                    # Pastikan urutan kolom sesuai training
                     X_encoded = X_encoded[prep_info['feature_columns']]
                     
                     # Prediksi
